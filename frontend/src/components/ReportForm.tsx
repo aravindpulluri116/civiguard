@@ -1,47 +1,80 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Complaint } from '../types';
 import { Camera, MapPin, Send, Loader2 } from 'lucide-react';
-import { analyzeComplaint, validateComplaint } from '../services/gemini';
+import { analyzeComplaint, validateComplaint, getCoordinatesFromAddress } from '../services/gemini';
 import { categoryOptions, urgencyOptions } from '../data/mockData';
 import { toast } from 'react-hot-toast';
 import { complaintService } from '../services/complaintService';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Initialize Gemini API
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyCo4m_8IUWaD3LsiAsHJabMYK4X-oLpt44');
 
 interface ReportFormProps {
   onSubmit: (report: any) => void;
   onCancel: () => void;
-  initialLocation?: { lat: number; lng: number };
+  initialLocation?: {
+    type: string;
+    coordinates: [number, number];
+  };
+}
+
+interface FormData {
+  title: string;
+  description: string;
+  category: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  status: 'pending';
+  images: string[];
+  location: {
+    type: string;
+    coordinates: [number, number];
+  };
+  email: string;
+  name: string;
 }
 
 export const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, onCancel, initialLocation }) => {
   const { user, login, logout } = useAuth();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     title: '',
     description: '',
-    category: 'other',
-    priority: 'medium' as 'low' | 'medium' | 'high' | 'critical',
-    status: 'pending' as const,
-    images: [] as string[],
-    location: initialLocation || { lat: 0, lng: 0 }
+    category: '',
+    priority: 'medium',
+    status: 'pending',
+    images: [],
+    location: {
+      type: 'Point',
+      coordinates: [0, 0]
+    },
+    email: user?.email || '',
+    name: user?.name || ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<{ category: string; priority: string; explanation: string; enhancedTitle?: string; enhancedDescription?: string } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [locationMethod, setLocationMethod] = useState<'live' | 'manual'>('live');
+  const [manualAddress, setManualAddress] = useState('');
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-analyze when title or description changes
   useEffect(() => {
     const analyzeInput = async () => {
-      if (formData.title.length > 5 && formData.description.length > 20) {
+      if (formData.title.length > 5 && formData.description.length > 10) {
         setIsAnalyzing(true);
         try {
           const result = await analyzeComplaint(formData.title, formData.description);
           setAiAnalysis(result);
-          setFormData(prev => ({
-            ...prev,
+      setFormData(prev => ({
+        ...prev,
             category: result.category,
             priority: result.priority as 'low' | 'medium' | 'high' | 'critical'
           }));
@@ -57,54 +90,101 @@ export const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, onCancel, init
     return () => clearTimeout(timeoutId);
   }, [formData.title, formData.description]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const newImages = Array.from(files).map(file => URL.createObjectURL(file));
-      setFormData(prev => ({ ...prev, images: [...prev.images, ...newImages] }));
+      try {
+        const uploadPromises = Array.from(files).map(async (file) => {
+          // For testing, we'll just use the file name as the URL
+          const imageUrl = `test-upload-${file.name}`;
+          return imageUrl;
+        });
+
+        const uploadedUrls = await Promise.all(uploadPromises);
+        setFormData(prev => ({ ...prev, images: [...prev.images, ...uploadedUrls] }));
+        toast.success('Images uploaded successfully!');
+      } catch (error) {
+        console.error('Error uploading images:', error);
+        toast.error('Failed to upload images. Please try again.');
+      }
+    }
+  };
+
+  const handleLocationMethodChange = (method: 'live' | 'manual') => {
+    setLocationMethod(method);
+    setLocationError(null);
+    if (method === 'live') {
+      getCurrentLocation();
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        location: {
+          type: 'Point',
+          coordinates: [0, 0]
+        }
+      }));
     }
   };
 
   const getCurrentLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          console.log('Got location:', position.coords);
-          setFormData(prev => ({
-            ...prev,
-            location: {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude
-            }
-          }));
-        },
-        (error) => {
-          console.error('Error getting location:', error);
-          // Set default location to Hyderabad if geolocation fails
-          setFormData(prev => ({
-            ...prev,
-            location: {
-              lat: 17.3850,
-              lng: 78.4867
-            }
-          }));
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 0
-        }
-      );
-    } else {
-      console.error('Geolocation is not supported by this browser.');
-      // Set default location to Hyderabad if geolocation is not supported
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation is not supported by your browser');
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        console.log('Got location:', position.coords);
+        setFormData(prev => ({
+          ...prev,
+          location: {
+            type: 'Point',
+            coordinates: [position.coords.longitude, position.coords.latitude] as [number, number]
+          }
+        }));
+        setLocationError(null);
+      },
+      (error) => {
+        console.error('Error getting location:', error);
+        setLocationError('Unable to retrieve your location. Please try manual address entry.');
+        // Set default location to Hyderabad if geolocation fails
+        setFormData(prev => ({
+          ...prev,
+          location: {
+            type: 'Point',
+            coordinates: [78.4867, 17.3850] as [number, number] // Hyderabad coordinates
+          }
+        }));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
+      }
+    );
+  };
+
+  const handleGeocodeAddress = async () => {
+    if (!manualAddress.trim()) {
+      setLocationError('Please enter an address');
+      return;
+    }
+
+    setIsGeocoding(true);
+    setLocationError(null);
+
+    try {
+      const location = await getCoordinatesFromAddress(manualAddress);
       setFormData(prev => ({
         ...prev,
-        location: {
-          lat: 17.3850,
-          lng: 78.4867
-        }
+        location
       }));
+      setLocationError(null);
+    } catch (error) {
+      console.error('Error getting coordinates:', error);
+      setLocationError('Error converting address to coordinates. Please try again.');
+    } finally {
+      setIsGeocoding(false);
     }
   };
 
@@ -122,45 +202,69 @@ export const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, onCancel, init
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    
     if (!user) {
-      toast.error('Please log in to submit a report');
+      toast.error('Please login to submit a complaint');
       return;
     }
 
-    try {
-      // Validate the complaint first
-      const validation = await validateComplaint(formData.title, formData.description);
-      if (!validation.isValid) {
-        toast.error(validation.reason);
-        setIsSubmitting(false);
-        return;
-      }
+    // Validate required fields
+    if (!formData.title.trim()) {
+      toast.error('Please enter a title');
+      return;
+    }
 
-      // Include enhanced fields if available from AI analysis
-      const submissionData = {
-        ...formData,
-        enhancedTitle: aiAnalysis?.enhancedTitle,
-        enhancedDescription: aiAnalysis?.enhancedDescription
+    if (!formData.description.trim()) {
+      toast.error('Please enter a description');
+      return;
+    }
+
+    if (!formData.category) {
+      toast.error('Please select a category');
+      return;
+    }
+
+    if (!formData.priority) {
+      toast.error('Please select a priority level');
+      return;
+    }
+
+    // Validate location
+    if (!formData.location.type || !Array.isArray(formData.location.coordinates) || formData.location.coordinates.length !== 2) {
+      toast.error('Please set a valid location');
+      return;
+    }
+
+    if (formData.location.coordinates[0] === 0 && formData.location.coordinates[1] === 0) {
+      toast.error('Please set a location for your complaint');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Create complaint data without any image-related fields
+      const complaintData = {
+        title: formData.title.trim(),
+        description: formData.description.trim(),
+        category: formData.category,
+        priority: formData.priority,
+        status: 'pending' as const,
+        location: {
+          type: 'Point',
+          coordinates: formData.location.coordinates
+        },
+        email: user.email || formData.email,
+        name: user.name || formData.name
       };
 
-      console.log('Submitting complaint with data:', submissionData);
+      console.log('Submitting complaint with data:', complaintData);
+      const complaint = await complaintService.createComplaint(complaintData);
 
-      const data = await complaintService.createComplaint(submissionData);
-      console.log('Received response from server:', data);
-      
-      onSubmit(data);
-      setShowSuccess(true);
-      toast.success('Report submitted successfully!');
-      setTimeout(() => {
-        navigate('/my-reports');
-      }, 2000);
-    } catch (err) {
-      console.error('Error submitting complaint:', err);
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      toast.error(errorMessage);
-      setError(errorMessage);
+      toast.success('Complaint submitted successfully!');
+      onSubmit(formData);
+      navigate('/my-reports');
+    } catch (error) {
+      console.error('Error submitting complaint:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to submit complaint. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -326,63 +430,115 @@ export const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, onCancel, init
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
-                ))}
+                  ))}
               </select>
             </div>
 
             {/* Location */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Location
-              </label>
-              <div className="flex space-x-2">
-                <button
-                  type="button"
-                  onClick={getCurrentLocation}
-                  className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700"
-                >
-                  <MapPin className="w-4 h-4" />
-                  <span>Use Current Location</span>
-                </button>
+            <div className="space-y-4">
+              <div className="flex items-center space-x-4">
+                <label className="text-gray-700 font-medium">Location Method:</label>
+                <div className="flex space-x-4">
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      className="form-radio"
+                      name="locationMethod"
+                      value="live"
+                      checked={locationMethod === 'live'}
+                      onChange={() => handleLocationMethodChange('live')}
+                    />
+                    <span className="ml-2">Use Current Location</span>
+                  </label>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      className="form-radio"
+                      name="locationMethod"
+                      value="manual"
+                      checked={locationMethod === 'manual'}
+                      onChange={() => handleLocationMethodChange('manual')}
+                    />
+                    <span className="ml-2">Enter Address</span>
+                  </label>
+                </div>
               </div>
-              <div className="mt-2 text-sm text-gray-500">
-                Coordinates: {formData.location.lat.toFixed(6)}, {formData.location.lng.toFixed(6)}
-              </div>
-              {formData.location.lat === 0 && formData.location.lng === 0 && (
-                <div className="mt-2 text-sm text-red-500">
-                  Location not set. Please click "Use Current Location" or allow location access in your browser.
+
+              {locationMethod === 'manual' && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={manualAddress}
+                    onChange={(e) => setManualAddress(e.target.value)}
+                    placeholder="Enter full address (e.g., 1600 Amphitheatre Parkway, Mountain View, CA)"
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleGeocodeAddress}
+                    disabled={isGeocoding}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isGeocoding ? 'Converting...' : 'Convert to Coordinates'}
+                  </button>
+                </div>
+              )}
+
+              {locationError && (
+                <p className="text-red-500 text-sm">{locationError}</p>
+              )}
+
+              {formData.location.coordinates[0] !== 0 && formData.location.coordinates[1] !== 0 && (
+                <div className="text-sm text-gray-600">
+                  <p>Coordinates: {formData.location.coordinates[1]}, {formData.location.coordinates[0]}</p>
                 </div>
               )}
             </div>
 
-            {/* Images */}
+            {/* Image Upload */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Images (Optional)
+                Upload Images
               </label>
-              <div className="flex items-center space-x-2">
-                <label className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 cursor-pointer">
-                  <Camera className="w-4 h-4" />
-                  <span>Upload Images</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
-                </label>
+              <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg">
+                <div className="space-y-1 text-center">
+                  <Camera className="mx-auto h-12 w-12 text-gray-400" />
+                  <div className="flex text-sm text-gray-600">
+                    <label
+                      htmlFor="file-upload"
+                      className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500"
+                    >
+                      <span>Upload files</span>
+                      <input
+                        id="file-upload"
+                        name="file-upload"
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={handleImageUpload}
+                        ref={fileInputRef}
+                      />
+                    </label>
+                    <p className="pl-1">or drag and drop</p>
+                  </div>
+                  <p className="text-xs text-gray-500">PNG, JPG, GIF up to 10MB</p>
+                </div>
               </div>
+              
+              {/* Image Preview */}
               {formData.images.length > 0 && (
-                <div className="mt-4 grid grid-cols-2 gap-4">
-                  {formData.images.map((image, index) => (
-                    <img
-                      key={index}
-                      src={image}
-                      alt={`Upload ${index + 1}`}
-                      className="w-full h-32 object-cover rounded-lg"
-                    />
-                  ))}
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Uploaded Images:</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    {formData.images.map((imageUrl, index) => (
+                      <div key={index} className="relative">
+                        <div className="bg-gray-100 rounded-lg p-2">
+                          <p className="text-sm text-gray-600 truncate">{imageUrl}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

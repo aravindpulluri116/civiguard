@@ -4,7 +4,7 @@ import { Complaint } from '../models/Complaint';
 export const complaintsController = {
   async getComplaints(req: Request, res: Response) {
     try {
-      const complaints = await Complaint.find().sort({ createdAt: -1 });
+      const complaints = await Complaint.find().populate('userId', 'name email').sort({ createdAt: -1 });
       res.json(complaints);
     } catch (error) {
       console.error('Error fetching complaints:', error);
@@ -17,7 +17,7 @@ export const complaintsController = {
       if (!req.user) {
         return res.status(401).json({ message: 'User not found' });
       }
-      const complaints = await Complaint.find({ userId: req.user._id }).sort({ createdAt: -1 });
+      const complaints = await Complaint.find({ userId: req.user._id }).populate('userId', 'name email').sort({ createdAt: -1 });
       res.json(complaints);
     } catch (error) {
       console.error('Error fetching user complaints:', error);

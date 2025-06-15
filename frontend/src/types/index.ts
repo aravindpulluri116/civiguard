@@ -2,20 +2,27 @@ export interface Complaint {
   _id: string;
   title: string;
   description: string;
-  enhancedTitle?: string;
-  enhancedDescription?: string;
-  category: string;
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  status: 'pending' | 'in-progress' | 'resolved';
   location: {
-    lat: number;
-    lng: number;
+    type: string;
+    coordinates: [number, number];
   };
+  status: 'pending' | 'in-progress' | 'resolved';
+  category: string;
   createdAt: string;
   updatedAt: string;
-  userId: string;
+  userId?: string;
+  email: string;
+  name: string;
+  imageUrl?: string;
   images?: string[];
-  comments?: Comment[];
+  department?: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  assignedTo?: string;
+  comments?: Array<{
+    text: string;
+    userId: string;
+    createdAt: string;
+  }>;
 }
 
 export interface Comment {

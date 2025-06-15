@@ -178,4 +178,67 @@ Do not include any markdown formatting or code block markers. Return only the ra
       explanation: 'Unable to analyze the complaint. Please select category and priority manually.'
     };
   }
+}
+
+export async function getCoordinatesFromAddress(address: string): Promise<{ type: string; coordinates: [number, number] }> {
+  try {
+    const prompt = `Given this address: "${address}", provide the latitude and longitude coordinates in this exact format:
+    {
+      "lat": number,
+      "lng": number
+    }
+    Only return the JSON object, nothing else.`;
+
+    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Invalid response format from Gemini API');
+    }
+
+    const responseText = data.candidates[0].content.parts[0].text;
+    
+    // Clean up the response text to handle markdown formatting
+    let jsonText = responseText
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+
+    try {
+      const coordinates = JSON.parse(jsonText);
+      
+      // Validate coordinates
+      if (typeof coordinates.lat !== 'number' || typeof coordinates.lng !== 'number') {
+        throw new Error('Invalid coordinates format');
+      }
+
+      return {
+        type: 'Point',
+        coordinates: [coordinates.lng, coordinates.lat] as [number, number]
+      };
+    } catch (parseError) {
+      console.error('Error parsing coordinates:', parseError);
+      throw new Error('Failed to parse coordinates');
+    }
+  } catch (error) {
+    console.error('Error getting coordinates:', error);
+    throw error;
+  }
 } 

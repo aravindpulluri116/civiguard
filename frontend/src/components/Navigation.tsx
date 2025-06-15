@@ -11,7 +11,8 @@ export const Navigation: React.FC<NavigationProps> = ({ userRole }) => {
   const { user, login, logout } = useAuth();
   const location = useLocation();
 
-  const isAdmin = user?.email === 'pulluriaravind@gmail.com' || userRole === 'admin';
+  // Check for admin access
+  const isAdmin = user?.email === 'pulluriaravind@gmail.com' || user?.role === 'admin';
 
   const navItems = [
     { id: 'home', label: 'Home', icon: Shield, path: '/' },

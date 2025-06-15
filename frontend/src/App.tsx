@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Login } from './components/Login';
@@ -30,16 +30,15 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
   
-  return (user?.email === 'pulluriaravind@gmail.com' || user?.role === 'admin') ? 
-    <>{children}</> : 
-    <Navigate to="/" replace />;
+  const isAdmin = user?.email === 'pulluriaravind@gmail.com' || user?.role === 'admin';
+  
+  return isAdmin ? <>{children}</> : <Navigate to="/" replace />;
 };
 
 const AppContent: React.FC = () => {
-  const { user, isLoading } = useAuth();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [complaints, setComplaints] = useState<Complaint[]>([]);
-  const [view, setView] = useState<'map' | 'list' | 'report'>('list');
-  const [isLoadingComplaints, setIsLoadingComplaints] = useState(true);
 
   useEffect(() => {
     const fetchComplaints = async () => {
@@ -48,8 +47,6 @@ const AppContent: React.FC = () => {
         setComplaints(data);
       } catch (error) {
         console.error('Error fetching complaints:', error);
-      } finally {
-        setIsLoadingComplaints(false);
       }
     };
 
@@ -58,10 +55,10 @@ const AppContent: React.FC = () => {
 
   const handleComplaintUpdate = async (id: string, updates: Partial<Complaint>) => {
     try {
-      const updatedComplaint = await complaintService.updateComplaint(id, updates);
-      setComplaints(prevComplaints =>
-        prevComplaints.map(complaint =>
-          complaint._id === id ? updatedComplaint : complaint
+      await complaintService.updateComplaint(id, updates);
+      setComplaints(prev => 
+        prev.map(complaint => 
+          complaint._id === id ? { ...complaint, ...updates } : complaint
         )
       );
     } catch (error) {
@@ -69,9 +66,19 @@ const AppContent: React.FC = () => {
     }
   };
 
-  if (isLoading || isLoadingComplaints) {
-    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  const handleViewChange = (view: 'map' | 'list' | 'report') => {
+    switch (view) {
+      case 'map':
+        navigate('/map');
+        break;
+      case 'report':
+        navigate('/report');
+        break;
+      case 'list':
+        navigate('/my-reports');
+        break;
   }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -81,7 +88,7 @@ const AppContent: React.FC = () => {
         <Routes>
           <Route path="/" element={
             <HomePage 
-              onViewChange={setView} 
+              onViewChange={handleViewChange} 
               complaintsCount={complaints.length}
             />
           } />
@@ -93,7 +100,7 @@ const AppContent: React.FC = () => {
             <ProtectedRoute>
               <ReportForm 
                 onSubmit={() => {}}
-                onCancel={() => {}}
+                onCancel={() => navigate('/')}
               />
             </ProtectedRoute>
           } />
@@ -119,11 +126,11 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
+    <Router>
     <AuthProvider>
-      <Router>
         <AppContent />
+      </AuthProvider>
       </Router>
-    </AuthProvider>
   );
 };
 

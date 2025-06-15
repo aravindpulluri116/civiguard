@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import { 
   BarChart3, 
   Users, 
@@ -12,25 +13,54 @@ import {
   MessageSquare,
   Calendar,
   TrendingUp,
-  ChevronDown
+  ChevronDown,
+  Mail
 } from 'lucide-react';
 import { Complaint } from '../types';
 import { categoryOptions, urgencyOptions, statusOptions } from '../data/mockData';
 import toast from 'react-hot-toast';
+import { complaintService } from '../services/complaintService';
+import { useAuth } from '../contexts/AuthContext';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Initialize Gemini API with fallback key
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyCo4m_8IUWaD3LsiAsHJabMYK4X-oLpt44';
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 interface AdminPanelProps {
   complaints: Complaint[];
   onUpdateComplaint: (id: string, updates: Partial<Complaint>) => void;
 }
 
+interface DepartmentOfficer {
+  Department: string;
+  'Officer Name': string;
+  Email: string;
+}
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({ complaints, onUpdateComplaint }) => {
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
+  const [officers, setOfficers] = useState<DepartmentOfficer[]>([]);
   const [filters, setFilters] = useState({
     category: '',
     priority: '',
     status: '',
     dateRange: 'all'
   });
+
+  useEffect(() => {
+    fetchOfficers();
+  }, []);
+
+  const fetchOfficers = async () => {
+    try {
+      const response = await axios.get('http://localhost:5000/api/admin/officers');
+      console.log('Fetched officers data:', response.data);
+      setOfficers(response.data);
+    } catch (err) {
+      console.error('Error fetching officers:', err);
+    }
+  };
 
   const filteredComplaints = complaints.filter(complaint => {
     const dateFilter = filters.dateRange === 'all' ? true : 
@@ -60,6 +90,106 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ complaints, onUpdateComp
       toast.success('Status updated successfully');
     } catch (error) {
       toast.error('Failed to update status');
+    }
+  };
+
+  const handleSendEmail = async (complaint: Complaint) => {
+    try {
+      // Get the Gemini model
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+      // Create a prompt for email formatting
+      const prompt = `Format a formal complaint letter using this exact format:
+
+[Your Name]
+[Your Address]
+[City, State ZIP Code]
+[Date]
+
+The Municipal Commissioner
+Greater Hyderabad Municipal Corporation (GHMC)
+[Address]
+[City, State ZIP Code]
+
+Subject: Complaint about ${complaint.title}
+
+Respected Sir/Madam,
+
+I am writing this letter to bring to your attention the following issue:
+
+Complaint Details:
+- Title: ${complaint.title}
+- Category: ${complaint.category}
+- Priority: ${complaint.priority}
+- Status: ${complaint.status}
+- Location: ${JSON.stringify(complaint.location)}
+
+Description:
+${complaint.description}
+
+Please format this as a formal letter following the exact structure above, but:
+1. Replace [Your Name] with "CIVIGUARD Admin Team"
+2. Replace [Your Address] with "CIVIGUARD Office"
+3. Replace [City, State ZIP Code] with "Hyderabad, Telangana 500001"
+4. Replace [Date] with today's date
+5. Keep the GHMC address as is
+6. Make the description more formal and detailed
+7. Add a proper closing paragraph requesting action
+8. End with "Thank you for your time and consideration."
+
+Keep the tone formal and professional.`;
+
+      // Generate the email content
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const formattedEmail = response.text();
+
+      // Create the Gmail URL with the formatted content
+      const emailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=uppulasneha23@gmail.com&su=Formal Complaint: ${complaint.title}&body=${encodeURIComponent(formattedEmail)}`;
+      window.open(emailUrl, '_blank');
+    } catch (error) {
+      console.error('Error generating email content:', error);
+      // Fallback to basic formal letter format if Gemini fails
+      const today = new Date().toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+      
+      const basicEmail = `CIVIGUARD Admin Team
+CIVIGUARD Office
+Hyderabad, Telangana 500001
+${today}
+
+The Municipal Commissioner
+Greater Hyderabad Municipal Corporation (GHMC)
+[Address]
+[City, State ZIP Code]
+
+Subject: Complaint about ${complaint.title}
+
+Respected Sir/Madam,
+
+I am writing this letter to bring to your attention the following issue:
+
+Complaint Details:
+- Title: ${complaint.title}
+- Category: ${complaint.category}
+- Priority: ${complaint.priority}
+- Status: ${complaint.status}
+- Location: ${JSON.stringify(complaint.location)}
+
+Description:
+${complaint.description}
+
+We request your immediate attention to this matter and appropriate action to resolve the issue. The concerned department has been notified, and we hope for a prompt response.
+
+Thank you for your time and consideration.
+
+Sincerely,
+CIVIGUARD Admin Team`;
+      const emailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=uppulasneha23@gmail.com&su=Formal Complaint: ${complaint.title}&body=${encodeURIComponent(basicEmail)}`;
+      window.open(emailUrl, '_blank');
     }
   };
 
@@ -301,12 +431,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ complaints, onUpdateComp
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(complaint.createdAt)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
                         onClick={() => setSelectedComplaint(complaint)}
                         className="text-blue-600 hover:text-blue-900 mr-4"
                       >
                         <Eye className="h-5 w-5" />
+                      </button>
+                      <button
+                        onClick={() => handleSendEmail(complaint)}
+                        className="text-green-600 hover:text-green-900 mr-4 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Notify Dept
                       </button>
                       <button
                         className="text-green-600 hover:text-green-900"
