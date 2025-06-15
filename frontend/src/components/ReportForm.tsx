@@ -250,15 +250,16 @@ export const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, onCancel, init
         status: 'pending' as const,
         location: {
           type: 'Point',
-          coordinates: formData.location.coordinates
+          coordinates: [
+            parseFloat(formData.location.coordinates[0].toString()),
+            parseFloat(formData.location.coordinates[1].toString())
+          ] as [number, number]
         },
         email: user.email || formData.email,
         name: user.name || formData.name
       };
 
-      console.log('Submitting complaint with data:', complaintData);
       const complaint = await complaintService.createComplaint(complaintData);
-
       toast.success('Complaint submitted successfully!');
       onSubmit(formData);
       navigate('/my-reports');

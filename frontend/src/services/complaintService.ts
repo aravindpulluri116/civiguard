@@ -81,54 +81,40 @@ export const complaintService = {
       category: complaintData.category,
       priority: complaintData.priority,
       status: 'pending',
-      location: complaintData.location,
+      location: {
+        lat: parseFloat(complaintData.location.coordinates[0].toString()),
+        lng: parseFloat(complaintData.location.coordinates[1].toString())
+      },
       email: complaintData.email,
-      name: complaintData.name
+      name: complaintData.name,
+      images: []
     };
-    
-    console.log('Creating complaint with data:', JSON.stringify(cleanData, null, 2));
-    
-    // Ensure all required fields are present
-    const requiredFields = ['title', 'description', 'category', 'priority', 'status', 'location', 'email', 'name'];
-    const missingFields = requiredFields.filter(field => !cleanData[field as keyof typeof cleanData]);
-    
-    if (missingFields.length > 0) {
-      throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
-    }
 
-    // Ensure location has the correct format
-    if (!cleanData.location.type || !Array.isArray(cleanData.location.coordinates)) {
-      throw new Error('Invalid location format');
-    }
-
+    // Log the data being sent
+    console.log('Sending complaint data:', JSON.stringify(cleanData, null, 2));
+    
     try {
-      console.log('Sending request to:', `${API_URL}/complaints`);
-      console.log('Request headers:', getAuthHeaders());
-      
       const response = await fetch(`${API_URL}/complaints`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify(cleanData)
       });
-
-      console.log('Response status:', response.status);
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Unknown error occurred' }));
         console.error('Error response from server:', errorData);
+        console.error('Response status:', response.status);
+        console.error('Response headers:', Object.fromEntries(response.headers.entries()));
         throw new Error(errorData.message || 'Failed to create complaint');
       }
 
       const data = await response.json();
-      console.log('Server response:', data);
       return data;
     } catch (error) {
       console.error('Error creating complaint:', error);
-      if (error instanceof Error) {
-        console.error('Error details:', error.message);
-        console.error('Error stack:', error.stack);
-      }
       throw error;
     }
   },
